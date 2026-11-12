@@ -1,11 +1,8 @@
 # Solidity Security Lab
 
-A small Foundry-based learning repository demonstrating a classic Solidity withdrawal vulnerability and a basic mitigation using the checks-effects-interactions (CEI) pattern.
+A small Foundry-based learning repository demonstrating a classic Solidity withdrawal reentrancy vulnerability and a basic mitigation using the checks-effects-interactions (CEI) pattern.
 
-The current source contains two contracts in `src/UnsafeExamples.sol`:
-
-- `UnsafeWithdraw`: intentionally vulnerable teaching example.
-- `SaferWithdraw`: a basic CEI-style example that clears the caller's recorded credit before making the external call.
+The repository contains two withdrawal contracts in `src/UnsafeExamples.sol` and a local reentrancy attacker plus Foundry tests in `test/Reentrancy.t.sol`.
 
 > **Local education only.** Do not deploy these examples or send real funds to them. This repository is not an audit, security tool, or production-ready vault.
 
@@ -14,34 +11,38 @@ The current source contains two contracts in `src/UnsafeExamples.sol`:
 - Understand why external calls can transfer control to another contract.
 - Recognize the reentrancy risk created by updating accounting after an external call.
 - Compare an unsafe withdrawal flow with a CEI-style state update.
-- Practice reading and testing Solidity contracts with Foundry.
+- Write and run Solidity tests with Foundry.
+- Observe how a malicious receiver can recursively call a withdrawal function.
 
-## The vulnerability: state update after external interaction
+## Contracts
 
-In `UnsafeWithdraw.withdraw()`, the contract:
+### `UnsafeWithdraw`
 
-1. Reads the caller's recorded credit.
-2. Sends ETH to the caller using `call`.
-3. Only after the external call succeeds, sets the caller's credit to zero.
+This is an intentionally vulnerable teaching example. Its `withdraw()` function sends ETH to the caller before clearing the caller's recorded credit. A recipient contract can re-enter while that credit is still available.
 
-Because the recipient receives control during the external call, a malicious contract can call back into `withdraw()` before its recorded credit has been cleared. This is the classic reentrancy pattern.
+### `SaferWithdraw`
 
-## The basic mitigation: checks-effects-interactions
+This example checks that the caller has a positive credit, clears the credit, and only then makes the external call. If the transfer fails, the transaction reverts, including the state update.
 
-`SaferWithdraw.withdraw()` follows this order:
+This demonstrates CEI for this simple withdrawal path. It is not a complete security guarantee; real contracts need broader threat modeling, testing, and review. A reentrancy guard may also be appropriate depending on the full contract design and its external-call paths.
 
-1. **Checks:** reads the caller's credit and requires it to be greater than zero.
-2. **Effects:** sets the caller's credit to zero.
-3. **Interactions:** transfers ETH to the caller.
+## Reentrancy demonstration
 
-If the external transfer fails, the transaction reverts, including the earlier state update.
+The test helper `ReentrantReceiver` deposits one ether and calls `withdraw()`. When it receives ETH, its `receive()` function attempts another withdrawal while the target has enough ETH for another one-ether payout.
 
-This is an educational illustration of CEI, not a complete security guarantee. Real contracts need broader threat modeling, tests, and review. A reentrancy guard may also be appropriate depending on the complete contract design and its external-call paths.
+The tests demonstrate the intended contrast:
+
+- Against `UnsafeWithdraw`, the receiver can repeatedly withdraw using the uncleared credit and drain the target's five-ether test balance in addition to its own one-ether deposit.
+- Against `SaferWithdraw`, the first withdrawal clears the receiver's credit before the callback. The recursive withdrawal therefore reverts, and the target's five-ether balance remains.
+
+These are controlled local test scenarios, not instructions to attack a live contract.
 
 ## Requirements
 
 - [Foundry](https://book.getfoundry.sh/) (Forge)
 - Solidity 0.8.24, configured in `foundry.toml`
+
+The test file uses the standard Foundry cheatcode address directly and does not require importing `forge-std`.
 
 ## Setup
 
@@ -52,41 +53,39 @@ git clone https://github.com/cbt0116/solidity-security-lab.git
 cd solidity-security-lab
 ```
 
-Build the contracts:
+Build the contracts and tests:
 
 ```bash
 forge build
 ```
 
-## Tests
-
-Run:
+Run the test suite:
 
 ```bash
-forge test
+forge test -vv
 ```
 
-**Current status:** no Foundry test directory or test contract is currently included. The command is provided for when tests are added; it should not be interpreted as evidence that the examples have passed security tests.
+## Tests included
 
-Recommended tests:
+| Test | What it checks |
+|---|---|
+| `testUnsafeWithdrawCanBeDrainedByReentrancy` | The malicious receiver repeatedly withdraws from the intentionally vulnerable contract |
+| `testSaferWithdrawBlocksReentrancy` | CEI prevents the receiver from withdrawing the same credit again |
+| `testSaferWithdrawReturnsDepositedEther` | A normal deposit and withdrawal update balances as expected |
+| `testSaferWithdrawRejectsEmptyCredit` | A caller with no credit cannot withdraw |
 
-- Deposit and credit accounting for both contracts
-- Successful withdrawal and zeroed credit
-- Revert when withdrawing with no credit
-- A malicious receiver that attempts recursive withdrawals against `UnsafeWithdraw`
-- The same attack attempt against `SaferWithdraw`, verifying that the recorded credit cannot be withdrawn repeatedly
-- Revert behavior when a recipient rejects ETH
-- Fuzz and invariant tests for accounting behavior
+The tests use Foundry's local `vm.deal` cheatcode to fund the test contract. No live network or real funds are involved.
 
 ## Scope and limitations
 
-The current examples are deliberately minimal:
+The examples are deliberately minimal:
 
 - They account only for ETH deposits and withdrawals.
 - They do not include ownership, access control, pausing, or emergency recovery.
 - `SaferWithdraw` uses CEI but does not include a dedicated reentrancy-guard modifier.
-- The repository currently has no automated Foundry tests or static-analysis report.
-- The README's other proposed topics—access control, oracle manipulation, accounting assumptions, signature replay, and denial of service—are future learning topics, not implemented examples in the current source.
+- The tests cover the specific withdrawal scenario shown here; they are not comprehensive fuzz, invariant, or formal verification.
+- The repository does not include a static-analysis report or independent security review.
+- Other topics such as access-control mistakes, oracle manipulation, accounting assumptions, signature replay, and denial of service are future learning topics, not implemented examples.
 
 ## Responsible use
 
@@ -94,7 +93,6 @@ The vulnerable contract is intentionally unsafe and must remain confined to loca
 
 ## Roadmap
 
-- Add Foundry unit tests and a malicious reentrant receiver
 - Add fuzz and invariant tests for withdrawal accounting
 - Add separate, clearly labeled examples for access-control and signature-replay mistakes
 - Explore oracle freshness and manipulation risks in isolated examples
@@ -102,4 +100,4 @@ The vulnerable contract is intentionally unsafe and must remain confined to loca
 
 ## License
 
-The source file declares the MIT SPDX identifier. Add a repository-level LICENSE file to make the reuse terms clear to visitors.
+The source file declares the MIT SPDX identifier. Add a repository-level LICENSE file to make the reuse terms clear.
