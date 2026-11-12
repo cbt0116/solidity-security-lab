@@ -47,6 +47,8 @@ contract SoliditySecurityLabTest {
     Vm private constant vm =
         Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
 
+    receive() external payable {}
+
     function setUp() public {
         vm.deal(address(this), 100 ether);
     }
